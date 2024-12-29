@@ -19,8 +19,8 @@
 #  define NETTLE_VERSION_MINOR 0
 #endif
 
-#ifdef HAVE_MBEDTLS
-#include <mbedtls/version.h>
+#ifdef HAVE_GNUTLS
+#include <gnutls/gnutls.h>
 #endif
 
 #include "FTL.h"
@@ -846,11 +846,11 @@ void parse_args(int argc, char *argv[])
 			printf("\n");
 			printf("****************************** %s%sCivetWeb%s *****************************\n",
 			       yellow, bold, normal);
-#ifdef HAVE_MBEDTLS
-			printf("Version:         %s%s%s%s (modified by Pi-hole) with %smbed TLS %s%s"MBEDTLS_VERSION_STRING"%s\n",
-			       green, bold, mg_version(), normal, yellow, green, bold, normal);
+#ifdef HAVE_GNUTLS
+			printf("Version:         %s%s%s%s (modified by Pi-hole) with %sGnuTLS %s%s%s%s\n",
+			       green, bold, mg_version(), normal, yellow, green, bold, gnutls_check_version(NULL), normal);
 #else
-			printf("Version:         %s%s%s%s%s (modified by Pi-hole) without %smbed TLS%s\n",
+			printf("Version:         %s%s%s%s%s (modified by Pi-hole) without %sGnuTLS%s\n",
 			       green, bold, mg_version(), normal, red, yellow, normal);
 #endif
 			printf("Features:        ");

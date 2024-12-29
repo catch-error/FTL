@@ -12,7 +12,6 @@
 #include "config/config.h"
 #include "config/toml_reader.h"
 #include "config/toml_writer.h"
-#include "config/setupVars.h"
 #include "log.h"
 #include "log.h"
 // readFTLlegacy()
@@ -44,9 +43,28 @@ static bool config_initialized = false;
 uint8_t last_checksum[SHA256_DIGEST_SIZE] = { 0 };
 
 // Private prototypes
-static bool port_in_use(const in_port_t port);
 static void reset_config_default(struct conf_item *conf_item);
 static void initConfig(struct config *conf);
+
+void trim_whitespace(char *string)
+{
+	// isspace(char*) man page:
+	// checks for white-space  characters. In the "C" and "POSIX"
+	// locales, these are: space, form-feed ('\f'), newline ('\n'),
+	// carriage return ('\r'), horizontal tab ('\t'), and vertical tab
+	// ('\v').
+	char *original = string, *modified = string;
+	// Trim any whitespace characters (see above) at the beginning by increasing the pointer address
+	while (isspace((unsigned char)*original))
+		original++;
+	// Copy the content of original into modified as long as there is something in original
+	while ((*modified = *original++) != '\0')
+		modified++;
+	// Trim any whitespace characters (see above) at the end of the string by overwriting it
+	// with the zero character (marking the end of a C string)
+	while (modified > string && isspace((unsigned char)*--modified))
+		*modified = '\0';
+}
 
 // Set debug flags from config struct to global debug_flags array
 // This is called whenever the config is reloaded and debug flags may have
@@ -1041,7 +1059,7 @@ static void initConfig(struct config *conf)
 	conf->webserver.paths.webhome.a = cJSON_CreateStringReference("<valid subpath>, both slashes are needed!");
 	conf->webserver.paths.webhome.t = CONF_STRING;
 	conf->webserver.paths.webhome.f = FLAG_RESTART_FTL;
-	conf->webserver.paths.webhome.d.s = (char*)"/admin/";
+	conf->webserver.paths.webhome.d.s = (char*)"/pihole/";
 	conf->webserver.paths.webhome.c = validate_filepath;
 
 	// sub-struct interface
@@ -1191,14 +1209,14 @@ static void initConfig(struct config *conf)
 	conf->files.pid.a = cJSON_CreateStringReference("<any writable file>");
 	conf->files.pid.t = CONF_STRING;
 	conf->files.pid.f = FLAG_RESTART_FTL;
-	conf->files.pid.d.s = (char*)"/run/pihole-FTL.pid";
+	conf->files.pid.d.s = (char*)"/var/run/pihole/pihole-FTL.pid";
 	conf->files.pid.c = validate_filepath;
 
 	conf->files.database.k = "files.database";
 	conf->files.database.h = "The location of FTL's long-term database";
 	conf->files.database.a = cJSON_CreateStringReference("<any FTL database>");
 	conf->files.database.t = CONF_STRING;
-	conf->files.database.d.s = (char*)"/etc/pihole/pihole-FTL.db";
+	conf->files.database.d.s = (char*)"/var/lib/pihole/pihole-FTL.db";
 	conf->files.database.c = validate_filepath;
 
 	conf->files.gravity.k = "files.gravity";
@@ -1206,30 +1224,15 @@ static void initConfig(struct config *conf)
 	conf->files.gravity.a = cJSON_CreateStringReference("<any Pi-hole gravity database>");
 	conf->files.gravity.t = CONF_STRING;
 	conf->files.gravity.f = FLAG_RESTART_FTL;
-	conf->files.gravity.d.s = (char*)"/etc/pihole/gravity.db";
+	conf->files.gravity.d.s = (char*)"/var/lib/pihole/gravity.db";
 	conf->files.gravity.c = validate_filepath;
-
-	conf->files.gravity_tmp.k = "files.gravity_tmp";
-	conf->files.gravity_tmp.h = "A temporary directory where Pi-hole can store files during gravity updates. This directory must be writable by the user running gravity (typically pihole).";
-	conf->files.gravity_tmp.a = cJSON_CreateStringReference("<any existing world-writable writable directory>");
-	conf->files.gravity_tmp.t = CONF_STRING;
-	conf->files.gravity_tmp.f = FLAG_RESTART_FTL;
-	conf->files.gravity_tmp.d.s = (char*)"/tmp";
-	conf->files.gravity_tmp.c = validate_stub; // Only type-based checking
 
 	conf->files.macvendor.k = "files.macvendor";
 	conf->files.macvendor.h = "The database containing MAC -> Vendor information for the network table";
 	conf->files.macvendor.a = cJSON_CreateStringReference("<any Pi-hole macvendor database>");
 	conf->files.macvendor.t = CONF_STRING;
-	conf->files.macvendor.d.s = (char*)"/etc/pihole/macvendor.db";
+	conf->files.macvendor.d.s = (char*)"/var/lib/pihole/macvendor.db";
 	conf->files.macvendor.c = validate_filepath;
-
-	conf->files.setupVars.k = "files.setupVars";
-	conf->files.setupVars.h = "The old config file of Pi-hole used before v6.0";
-	conf->files.setupVars.a = cJSON_CreateStringReference("<any Pi-hole setupVars file>");
-	conf->files.setupVars.t = CONF_STRING;
-	conf->files.setupVars.d.s = (char*)"/etc/pihole/setupVars.conf";
-	conf->files.setupVars.c = validate_filepath;
 
 	conf->files.pcap.k = "files.pcap";
 	conf->files.pcap.h = "An optional file containing a pcap capture of the network traffic. This file is used for debugging purposes only. If you don't know what this is, you don't need it.\n Setting this to an empty string disables pcap recording. The file must be writable by the user running FTL (typically pihole). Failure to write to this file will prevent the DNS resolver from starting. The file is appended to if it already exists.";
@@ -1614,111 +1617,23 @@ bool readFTLconf(struct config *conf, const bool rewrite)
 	getEnvVars();
 
 	// Try to read TOML config file
-	// If we cannot parse /etc/pihole.toml (due to missing or invalid syntax),
-	// we try to read the rotated files in /etc/pihole/config_backup starting at
-	// the most recent one and going back in time until we find a valid config
-	for(unsigned int i = 0; i < MAX_ROTATIONS; i++)
+	if(readFTLtoml(NULL, conf, NULL, rewrite, NULL))
 	{
-		if(readFTLtoml(NULL, conf, NULL, rewrite, NULL, i))
+		// If successful, we write the config file back to disk
+		// to ensure that all options are present and comments
+		// about options deviating from the default are present
+		if(rewrite)
 		{
-			// If successful, we write the config file back to disk
-			// to ensure that all options are present and comments
-			// about options deviating from the default are present
-			if(rewrite)
-			{
-				writeFTLtoml(true);
-				write_dnsmasq_config(conf, false, NULL);
-				write_custom_list();
-			}
-			return true;
+			writeFTLtoml(true);
+			write_dnsmasq_config(conf, false, NULL);
+			write_custom_list();
 		}
+		return true;
 	}
 
-	log_info("No config file nor backup available, using defaults");
+	log_info("No config file, using defaults");
 
-	// If we reach this point, we could not read the TOML config file When
-	// this functions is invoked to run without rewriting, we are likely
-	// running interactively and do not want to migrate settings (yet):
-	// using defaults is fine in this case
-	if(!rewrite)
-		return false;
-
-	// Check if MIGRATION_TARGET_V6 exists and is a directory
-	// Ideally, this directory should be created by the installer but users
-	// may have deleted it manually and it is necessary for restoring
-	// Teleporter files
-	create_migration_target_v6();
-
-	// If no previous config file could be read, we are likely either running
-	// for the first time or we are upgrading from a version prior to v6.0
-	// In this case, we try to read the legacy config files
-	const char *path = "";
-	if((path = readFTLlegacy(conf)) != NULL)
-	{
-		const char *target = MIGRATION_TARGET_V6"/pihole-FTL.conf";
-		log_info("Moving %s to %s", path, target);
-		if(rename(path, target) != 0)
-			log_warn("Unable to move %s to %s: %s", path, target, strerror(errno));
-	}
-	// Import bits and pieces from legacy config files
-	// setupVars.conf
-	importsetupVarsConf();
-	// 04-pihole-static-dhcp.conf
-	read_legacy_dhcp_static_config();
-	// 05-pihole-custom-cname.conf
-	read_legacy_cnames_config();
-	// custom.list
-	read_legacy_custom_hosts_config();
-
-	// When we reach this point but the FTL TOML config file exists, it may
-	// contain errors such as syntax errors, etc. We move it into a
-	// ".broken" location so it can be revisited later
-	if(file_exists(GLOBALTOMLPATH))
-	{
-		const char new_name[] = GLOBALTOMLPATH ".broken";
-		rotate_files(new_name, NULL);
-		rename(GLOBALTOMLPATH, new_name);
-	}
-
-	// Determine default webserver ports if not imported from setupVars.conf
-	if(!(config.webserver.port.f & FLAG_CONF_IMPORTED))
-	{
-		// Check if ports 80/TCP and 443/TCP are already in use
-		const in_port_t http_port = port_in_use(80) ? 8080 : 80;
-		const in_port_t https_port = port_in_use(443) ? 8443 : 443;
-
-		// Create a string with the default ports
-		// Allocate memory for the string
-		char *ports = calloc(32, sizeof(char));
-		if(ports == NULL)
-		{
-			log_err("Unable to allocate memory for default ports string");
-			return false;
-		}
-		// Create the string
-		snprintf(ports, 32, "%d,%ds", http_port, https_port);
-
-		// Append IPv6 ports if IPv6 is enabled
-		const bool have_ipv6 = ipv6_enabled();
-		if(have_ipv6)
-			snprintf(ports + strlen(ports), 32 - strlen(ports),
-				",[::]:%d,[::]:%ds", http_port, https_port);
-
-		// Set default values for webserver ports
-		if(conf->webserver.port.t == CONF_STRING_ALLOCATED)
-			free(conf->webserver.port.v.s);
-		conf->webserver.port.v.s = ports;
-		conf->webserver.port.t = CONF_STRING_ALLOCATED;
-
-		log_info("Config initialized with webserver ports %d (HTTP) and %d (HTTPS), IPv6 support is %s",
-		         http_port, https_port, have_ipv6 ? "enabled" : "disabled");
-	}
-
-	// Initialize the TOML config file
-	writeFTLtoml(true);
-	write_dnsmasq_config(conf, false, NULL);
-	write_custom_list();
-
+	// If we reach this point, we could not read the TOML config file
 	return false;
 }
 
@@ -1738,7 +1653,15 @@ bool getLogFilePath(void)
 
 	// Check if the config file contains a different path
 	if(!getLogFilePathTOML())
-		return getLogFilePathLegacy(&config, NULL);
+	{
+		// Free previously allocated memory (if any)
+		if(config.files.log.ftl.t == CONF_STRING_ALLOCATED)
+			free(config.files.log.ftl.v.s);
+
+		// Use standard path if no custom path was obtained from the config file
+		config.files.log.ftl.t = CONF_STRING;
+		config.files.log.ftl.v.s = config.files.log.ftl.d.s;
+	}
 
 	return true;
 }
@@ -1851,7 +1774,7 @@ void reread_config(void)
 
 	// Read TOML config file
 	bool restart = false;
-	if(readFTLtoml(&config, &conf_copy, NULL, true, &restart, 0))
+	if(readFTLtoml(&config, &conf_copy, NULL, true, &restart))
 	{
 		// Install new configuration
 		log_debug(DEBUG_CONFIG, "Loaded configuration is valid, installing it");
@@ -1897,64 +1820,4 @@ void reread_config(void)
 	// If we need to restart FTL, we do so now
 	if(restart)
 		restart_ftl("pihole.toml change");
-}
-
-// Very simple test of a port's availability by trying to bind a TCP socket to
-// it at 0.0.0.0 (this tests only IPv4 availability)
-static bool port_in_use(const in_port_t port)
-{
-	// Create a socket
-	const int sock = socket(AF_INET, SOCK_STREAM, 0);
-	if(sock < 0)
-	{
-		log_err("Unable to create port testing socket: %s", strerror(errno));
-		return false;
-	}
-
-	// Bind the socket to the desired port
-	struct sockaddr_in addr = { 0 };
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(port);
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-	// Try to bind the socket
-	if(bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0 && errno == EADDRINUSE)
-	{
-		// If we cannot bind the socket, the port is in use
-		close(sock);
-		return true;
-	}
-
-	// If we can bind the socket, the port is not in use
-	close(sock);
-	return false;
-}
-
-/**
- * @brief Create a migration target directory for version 6.
- *
- * This function creates a directory for migration target version 6. If the directory
- * already exists, it does nothing. The function also changes the ownership of the
- * directory to the user running the FTL program.
- *
- * @return true if the directory creation and ownership change were successful, false otherwise.
- */
-bool create_migration_target_v6(void)
-{
-	if(mkdir(MIGRATION_TARGET_V6, 0755) != 0 && errno != EEXIST)
-	{
-		log_err("Unable to create directory %s: %s", MIGRATION_TARGET_V6, strerror(errno));
-		return false;
-	}
-	else
-	{
-		// Change ownership of the directory to the user running FTL
-		if(chown(MIGRATION_TARGET_V6, getuid(), getgid()) != 0)
-		{
-			log_err("Unable to change ownership of %s: %s", MIGRATION_TARGET_V6, strerror(errno));
-			return false;
-		}
-	}
-
-	return true;
 }

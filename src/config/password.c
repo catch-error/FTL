@@ -27,7 +27,11 @@
 #include <nettle/sha2.h>
 #include <nettle/base64.h>
 #include <nettle/version.h>
+#if (NETTLE_VERSION_MAJOR > 3 || (NETTLE_VERSION_MAJOR == 3 && NETTLE_VERSION_MINOR >= 9))
 #include <nettle/balloon.h>
+#else
+#include "balloon.c"
+#endif
 
 // Salt length for balloon hashing
 // The purpose of including salts is to modify the function used to hash each

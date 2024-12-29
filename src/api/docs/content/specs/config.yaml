@@ -486,11 +486,7 @@ components:
                   type: string
                 gravity:
                   type: string
-                gravity_tmp:
-                  type: string
                 macvendor:
-                  type: string
-                setupVars:
                   type: string
                 pcap:
                   type: string
@@ -746,7 +742,7 @@ components:
               cert: "/etc/pihole/tls.pem"
             paths:
               webroot: "/var/www/html"
-              webhome: "/admin/"
+              webhome: "/pihole/"
             interface:
               boxed: true
               theme: "default-darker"
@@ -769,12 +765,10 @@ components:
                 limit: 60.0
                 unit: "C"
           files:
-            pid: "/run/pihole-FTL.pid"
-            database: "/etc/pihole/pihole-FTL.db"
-            gravity: "/etc/pihole/gravity.db"
-            gravity_tmp: "/tmp"
-            macvendor: "/etc/pihole/macvendor.db"
-            setupVars: "/etc/pihole/setupVars.conf"
+            pid: "/var/run/pihole/pihole-FTL.pid"
+            database: "/var/lib/pihole/pihole-FTL.db"
+            gravity: "/var/lib/pihole/gravity.db"
+            macvendor: "/var/lib/pihole/macvendor.db"
             pcap: ""
             log:
               ftl: "/var/log/pihole/FTL.log"

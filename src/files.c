@@ -11,7 +11,6 @@
 #include "FTL.h"
 #include "files.h"
 #include "config/config.h"
-#include "config/setupVars.h"
 #include "log.h"
 // sha256_raw_to_hex()
 #include "config/password.h"
@@ -357,82 +356,6 @@ static char *trim(char *str)
 	return start;
 }
 
-// Credits: https://stackoverflow.com/a/2180157 (modified) for the fallback solution
-static int copy_file(const char *source, const char *destination)
-{
-// Check glibc >= 2.27 for copy_file_range()
-#if __GLIBC__ > 2 ||  (__GLIBC__ == 2 && (__GLIBC_MINOR__ >= 27 ))
-	int fd_in, fd_out;
-	struct stat stat;
-	size_t len;
-	ssize_t ret;
-
-	fd_in = open(source, O_RDONLY);
-	if (fd_in == -1)
-	{
-		log_warn("copy_file(): Failed to open \"%s\" read-only: %s", source, strerror(errno));
-		return -1;
-	}
-
-	if (fstat(fd_in, &stat) == -1) {
-		perror("fstat");
-		exit(EXIT_FAILURE);
-	}
-
-	len = stat.st_size;
-
-	fd_out = open(destination, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-	if (fd_out == -1)
-	{
-		log_warn("copy_file(): Failed to open \"%s\" for writing: %s", destination, strerror(errno));
-		close(fd_in);
-		return -1;
-	}
-
-	do {
-		ret = copy_file_range(fd_in, NULL, fd_out, NULL, len, 0);
-		if (ret == -1) {
-			log_warn("copy_file(): Failed to copy file after %zu of %zu bytes: %s", (size_t)stat.st_size - len, (size_t)stat.st_size, strerror(errno));
-			close(fd_in);
-			close(fd_out);
-			return -1;
-		}
-
-		len -= ret;
-	} while (len > 0 && ret > 0);
-
-	close(fd_in);
-	close(fd_out);
-
-	return 0;
-#else
-	int input, output;
-	if ((input = open(source, O_RDONLY)) == -1)
-	{
-			log_warn("copy_file(): Failed to open \"%s\" read-only: %s", source, strerror(errno));
-			return -1;
-	}
-	if ((output = creat(destination, 0660)) == -1)
-	{
-			log_warn("copy_file(): Failed to open \"%s\" for writing: %s", destination, strerror(errno));
-			close(input);
-			return -1;
-	}
-	// Use sendfile (kernel-space copying as fallback)
-	off_t bytesCopied = 0;
-	struct stat fileinfo = {0};
-	fstat(input, &fileinfo);
-	errno = 0;
-	const int result = sendfile(output, input, &bytesCopied, fileinfo.st_size);
-	if(result == -1)
-			log_warn("copy_file(): Failed to copy \"%s\" to \"%s\": %s", source, destination, strerror(errno));
-	close(input);
-	close(output);
-
-	return result;
-#endif
-}
-
 // Change ownership of file to pihole user
 bool chown_pihole(const char *path, struct passwd *pwd)
 {
@@ -465,87 +388,6 @@ bool chown_pihole(const char *path, struct passwd *pwd)
 	          path, pwd->pw_name, grp_name, pwd->pw_uid, pwd->pw_gid);
 
 	return true;
-}
-
-// Rotate files in a directory
-void rotate_files(const char *path, char **first_file)
-{
-	// Check if file exists. If not, we don't need to rotate anything here
-	if(!file_exists(path))
-	{
-		log_debug(DEBUG_CONFIG, "rotate_files(): File \"%s\" does not exist, not rotating", path);
-		return;
-	}
-
-	// Try to create backup directory if it does not exist
-	if(!directory_exists(BACKUP_DIR))
-		mkdir(BACKUP_DIR, S_IRWXU | S_IRWXG); // mode 0770
-
-	// Rename all files to one number higher, except for the original file
-	// The original file is *copied* to the backup directory to avoid possible
-	// issues with file permissions if the new config cannot be written after
-	// the old file has already been moved away
-	for(unsigned int i = MAX_ROTATIONS; i > 0; i--)
-	{
-		// Construct old and new paths
-		char *fname = strdup(path);
-		const char *filename = basename(fname);
-		// extra 6 bytes is enough space for up to 999 rotations ("/", ".", "\0", "999")
-		const size_t buflen = strlen(filename) + MAX(strlen(BACKUP_DIR), strlen(path)) + 6;
-		char *old_path = calloc(buflen, sizeof(char));
-		if(i == 1)
-			snprintf(old_path, buflen, "%s", path);
-		else
-			snprintf(old_path, buflen, BACKUP_DIR"/%s.%u", filename, i-1);
-		char *new_path = calloc(buflen, sizeof(char));
-		snprintf(new_path, buflen, BACKUP_DIR"/%s.%u", filename, i);
-		free(fname);
-
-		// If this is the first file, export the path to the caller (if
-		// requested)
-		if(i == 1 && first_file != NULL)
-			*first_file = strdup(new_path);
-
-		if(file_exists(old_path))
-		{
-			// Copy file to backup directory
-			if(i == 1)
-			{
-				// Copy file to backup directory
-				log_debug(DEBUG_CONFIG, "Copying %s -> %s", old_path, new_path);
-				if(copy_file(old_path, new_path) < 0)
-				{
-					log_warn("Rotation %s -(COPY)> %s failed",
-					         old_path, new_path);
-				}
-				else
-				{
-					// Log success if debug is enabled
-					log_debug(DEBUG_CONFIG, "Copied %s -> %s",
-					          old_path, new_path);
-				}
-			}
-			// Rename file to backup directory
-			else if(rename(old_path, new_path) < 0)
-			{
-				log_warn("Rotation %s -(MOVE)> %s failed: %s",
-				         old_path, new_path, strerror(errno));
-			}
-			else
-			{
-				// Log success if debug is enabled
-				log_debug(DEBUG_CONFIG, "Rotated %s -> %s",
-				          old_path, new_path);
-			}
-
-			// Change ownership of file to pihole user
-			chown_pihole(new_path, NULL);
-		}
-
-		// Free memory
-		free(old_path);
-		free(new_path);
-	}
 }
 
 // Credits: https://stackoverflow.com/a/55410469

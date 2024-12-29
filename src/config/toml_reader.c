@@ -10,7 +10,6 @@
 
 #include "FTL.h"
 #include "toml_reader.h"
-#include "config/setupVars.h"
 #include "log.h"
 // getprio(), setprio()
 #include <sys/resource.h>
@@ -27,7 +26,7 @@
 #include "config/env.h"
 
 // Private prototypes
-static toml_table_t *parseTOML(const unsigned int version);
+static toml_table_t *parseTOML(void);
 static void reportDebugFlags(void);
 
 // Migrate dns.revServer -> dns.revServers[0]
@@ -102,22 +101,21 @@ static bool migrate_config(toml_table_t *toml, struct config *newconf)
 }
 
 bool readFTLtoml(struct config *oldconf, struct config *newconf,
-                 toml_table_t *toml, const bool verbose, bool *restart,
-                 const unsigned int version)
+                 toml_table_t *toml, const bool verbose, bool *restart)
 {
 	// Parse lines in the config file if we did not receive a pointer to a TOML
 	// table from an imported Teleporter file
 	bool teleporter = (toml != NULL);
 	if(!teleporter)
 	{
-		toml = parseTOML(version);
+		toml = parseTOML();
 		if(!toml)
 			return false;
 	}
 
 	// First, get an array of keys of config items that have been forced
 	// through environment variables
-	cJSON *env_vars = read_forced_vars(version);
+	cJSON *env_vars = read_forced_vars();
 
 	// Try to read debug config. This is done before the full config
 	// parsing to allow for debug output further down
@@ -131,7 +129,7 @@ bool readFTLtoml(struct config *oldconf, struct config *newconf,
 	set_debug_flags(newconf);
 
 	log_debug(DEBUG_CONFIG, "Reading %s TOML config file",
-	          teleporter ? "teleporter" : version == 0 ? "default" : "backup");
+	          teleporter ? "teleporter" : "default");
 
 	// Read all known config items
 	for(unsigned int i = 0; i < CONFIG_ELEMENTS; i++)
@@ -225,11 +223,11 @@ bool readFTLtoml(struct config *oldconf, struct config *newconf,
 }
 
 // Parse TOML config file
-static toml_table_t *parseTOML(const unsigned int version)
+static toml_table_t *parseTOML(void)
 {
 	// Try to open default config file. Use fallback if not found
 	FILE *fp;
-	if((fp = openFTLtoml("r", version)) == NULL)
+	if((fp = openFTLtoml("r")) == NULL)
 		return NULL;
 
 	// Parse lines in the config file
@@ -254,7 +252,7 @@ bool getLogFilePathTOML(void)
 {
 	log_debug(DEBUG_CONFIG, "Reading TOML config file: log file path");
 
-	toml_table_t *conf = parseTOML(0);
+	toml_table_t *conf = parseTOML();
 	if(!conf)
 		return false;
 

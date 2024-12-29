@@ -10,11 +10,6 @@
 #ifndef X509_H
 #define X509_H
 
-#ifdef HAVE_MBEDTLS
-# include <mbedtls/entropy.h>
-# include <mbedtls/ctr_drbg.h>
-#endif
-
 #include "enums.h"
 
 bool generate_certificate(const char* certfile, bool rsa, const char *domain);

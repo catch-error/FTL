@@ -14,8 +14,6 @@
 #include "api/api.h"
 // sysinfo(), get_nprocs_conf()
 #include <sys/sysinfo.h>
-// get_blockingstatus()
-#include "config/setupVars.h"
 // counters
 #include "shmem.h"
 // get_FTL_db_filesize()

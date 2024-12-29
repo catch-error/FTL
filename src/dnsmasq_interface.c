@@ -20,7 +20,6 @@
 #include "database/database-thread.h"
 #include "datastructure.h"
 #include "database/gravity-db.h"
-#include "config/setupVars.h"
 #include "daemon.h"
 #include "timers.h"
 #include "gc.h"

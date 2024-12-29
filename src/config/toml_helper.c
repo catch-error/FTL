@@ -15,7 +15,7 @@
 #include "datastructure.h"
 // flock(), LOCK_SH
 #include <sys/file.h>
-// rotate_files()
+// chown_pihole()
 #include "files.h"
 //set_and_check_password()
 #include "config/password.h"
@@ -23,37 +23,17 @@
 #include <limits.h>
 // escape_json()
 #include "webserver/http-common.h"
-// chown_pihole()
-#include "files.h"
 
 // Open the TOML file for reading or writing
-FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *mode, const unsigned int version)
+FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *mode)
 {
-	// This should not happen, install a safeguard anyway to unveil
-	// possible future coding issues early on
-	if(mode[0] == 'w' && version != 0)
-	{
-		log_crit("Writing to version != 0 is not supported in openFTLtoml(%s,%u)",
-		         mode, version);
-		exit(EXIT_FAILURE);
-	}
-
-	// Build filename based on version
+	// Use global config file
 	char filename[PATH_MAX] = { 0 };
-	if(version == 0)
-	{
-		// Use global config file
-		strncpy(filename, GLOBALTOMLPATH, sizeof(filename));
+	strncpy(filename, GLOBALTOMLPATH, sizeof(filename));
 
-		// Append ".tmp" if we are writing
-		if(mode[0] == 'w')
-			strncat(filename, ".tmp", sizeof(filename));
-	}
-	else
-	{
-		// Use rotated config file
-		snprintf(filename, sizeof(filename), BACKUP_DIR"/pihole.toml.%u", version);
-	}
+	// Append ".tmp" if we are writing
+	if(mode[0] == 'w')
+		strncat(filename, ".tmp", sizeof(filename));
 
 	// Try to open config file
 	FILE *fp = fopen(filename, mode);
@@ -61,8 +41,7 @@ FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *m
 	// Return early if opening failed
 	if(!fp)
 	{
-		log_info("Config %sfile %s not available (%s): %s",
-		         version > 0 ? "backup " : "", filename, mode, strerror(errno));
+		log_info("Config file %s not available (%s): %s", filename, mode, strerror(errno));
 		return NULL;
 	}
 
@@ -77,10 +56,6 @@ FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *m
 		return NULL;
 	}
 
-	// Log if we are using a backup file
-	if(version > 0)
-		log_info("Using config backup %s", filename);
-
 	errno = 0;
 	return fp;
 }
@@ -89,8 +64,14 @@ FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *m
 void closeFTLtoml(FILE *fp)
 {
 	// Release file lock
-	if(flock(fileno(fp), LOCK_UN) != 0)
+	int fn = fileno(fp);
+	if(flock(fn, LOCK_UN) != 0)
 		log_err("Cannot release lock on FTL's config file: %s", strerror(errno));
+
+	// Get access mode
+	int mode = fcntl(fn, F_GETFL);
+	if (mode == -1)
+		log_err("Cannot get access mode for FTL's config file: %s", strerror(errno));
 
 	// Close file
 	if(fclose(fp) != 0)
@@ -98,7 +79,7 @@ void closeFTLtoml(FILE *fp)
 
 	// Chown file if we are root
 	if(geteuid() == 0)
-		chown_pihole(GLOBALTOMLPATH, NULL);
+		chown_pihole(((mode & O_ACCMODE) == O_RDONLY) ? GLOBALTOMLPATH : GLOBALTOMLPATH".tmp", NULL);
 
 	return;
 }

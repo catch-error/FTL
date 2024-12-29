@@ -620,14 +620,14 @@ bool __attribute__((nonnull(1,2,3))) readEnvValue(struct conf_item *conf_item, s
 	return true;
 }
 
-cJSON *read_forced_vars(const unsigned int version)
+cJSON *read_forced_vars(void)
 {
 	// Create cJSON array to store forced variables
 	cJSON *env_vars = cJSON_CreateArray();
 
 	// Try to open default config file. Use fallback if not found
 	FILE *fp;
-	if((fp = openFTLtoml("r", version)) == NULL)
+	if((fp = openFTLtoml("r")) == NULL)
 	{
 		// Return empty cJSON array
 		return env_vars;

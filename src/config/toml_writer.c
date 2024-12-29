@@ -42,7 +42,7 @@ bool writeFTLtoml(const bool verbose)
 
 	// Try to open a temporary config file for writing
 	FILE *fp;
-	if((fp = openFTLtoml("w", 0)) == NULL)
+	if((fp = openFTLtoml("w")) == NULL)
 	{
 		log_warn("Cannot write to FTL config file (%s), content not updated", strerror(errno));
 		return false;
@@ -175,9 +175,6 @@ bool writeFTLtoml(const bool verbose)
 	{
 		// Stop watching for changes in the config file
 		watch_config(false);
-
-		// Rotate config file
-		rotate_files(GLOBALTOMLPATH, NULL);
 
 		// Move file
 		if(rename(GLOBALTOMLPATH".tmp", GLOBALTOMLPATH) != 0)

@@ -19,14 +19,10 @@ set(sources
         env.h
         inotify.c
         inotify.h
-        legacy_reader.c
-        legacy_reader.h
         password.c
         password.h
         suggest.c
         suggest.h
-        setupVars.c
-        setupVars.h
         toml_writer.c
         toml_writer.h
         toml_reader.c

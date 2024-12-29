@@ -316,20 +316,21 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
 # for DNSSEC we need the nettle (+ hogweed) crypto and the gmp math libraries
-find_library(LIBHOGWEED NAMES libhogweed${LIBRARY_SUFFIX} hogweed HINTS /usr/local/lib64)
-find_library(LIBGMP NAMES libgmp${LIBRARY_SUFFIX} gmp)
-find_library(LIBNETTLE NAMES libnettle${LIBRARY_SUFFIX} nettle HINTS /usr/local/lib64)
+find_library(LIBHOGWEED NAMES hogweed)
+find_library(LIBGMP NAMES gmp)
+find_library(LIBNETTLE NAMES nettle)
+
+find_library(LIBGNUTLS NAMES gnutls)
 
 # for IDN2 we need the idn2 library which in turn depends on the unistring library
-find_library(LIBIDN2 NAMES libidn2${LIBRARY_SUFFIX} idn2)
-find_library(LIBUNISTRING NAMES libunistring${LIBRARY_SUFFIX} unistring)
+find_library(LIBIDN2 NAMES idn2)
+find_library(LIBUNISTRING NAMES unistring)
 
-target_link_libraries(pihole-FTL rt Threads::Threads ${LIBHOGWEED} ${LIBGMP} ${LIBNETTLE} ${LIBIDN2} ${LIBUNISTRING})
+find_library(LIBREADLINE NAMES readline)
+find_library(LIBHISTORY NAMES history)
+find_library(LIBTERMCAP NAMES termcap)
 
-if(LUA_DL STREQUAL "true")
-    find_library(LIBDL dl)
-    target_link_libraries(pihole-FTL ${LIBDL})
-endif()
+target_link_libraries(pihole-FTL rt Threads::Threads ${LIBGNUTLS} ${LIBHOGWEED} ${LIBGMP} ${LIBNETTLE} ${LIBIDN2} ${LIBUNISTRING})
 
 add_subdirectory(api)
 add_subdirectory(webserver)
@@ -344,9 +345,6 @@ add_subdirectory(config)
 add_subdirectory(tools)
 add_subdirectory(ntp)
 
-find_library(LIBREADLINE NAMES libreadline${LIBRARY_SUFFIX} readline)
-find_library(LIBHISTORY NAMES libhistory${LIBRARY_SUFFIX} history)
-find_library(LIBTERMCAP NAMES libtermcap${LIBRARY_SUFFIX} termcap)
 if(LIBREADLINE AND LIBHISTORY AND LIBTERMCAP)
     message(STATUS "Building FTL with readline support: YES")
     target_compile_definitions(lua PRIVATE LUA_USE_READLINE)
@@ -356,30 +354,24 @@ else()
     message(STATUS "Building FTL with readline support: NO")
 endif()
 
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "..." FORCE)
+message(STATUS "Building FTL with TLS support: YES")
+target_compile_definitions(core PRIVATE HAVE_GNUTLS)
+target_compile_definitions(civetweb PRIVATE USE_GNUTLS)
+target_compile_definitions(webserver PRIVATE HAVE_GNUTLS)
+
+if(LUA_DL STREQUAL "true")
+    find_library(LIBDL dl)
+    target_link_libraries(pihole-FTL ${LIBDL})
 endif()
 
-find_library(LIBMBEDCRYPTO NAMES lmbedcrypto${LIBRARY_SUFFIX} mbedcrypto)
-find_library(LIBMBEDX509 NAMES lmbedx509${LIBRARY_SUFFIX} mbedx509)
-find_library(LIBMBEDTLS NAMES lmbedtls${LIBRARY_SUFFIX} mbedtls)
-if(LIBMBEDCRYPTO AND LIBMBEDX509 AND LIBMBEDTLS)
-    # Enable TLS support in civetweb if mbedTLS is available
-    message(STATUS "Building FTL with TLS support: YES")
-    target_compile_definitions(core PRIVATE HAVE_MBEDTLS)
-    target_compile_definitions(civetweb PRIVATE USE_MBEDTLS)
-    target_compile_definitions(webserver PRIVATE HAVE_MBEDTLS)
-    # Link against the mbedTLS libraries, the order is important (!)
-    target_link_libraries(pihole-FTL ${LIBMBEDTLS} ${LIBMBEDX509} ${LIBMBEDCRYPTO})
-else()
-    # Disable TLS support in civetweb if mbedTLS is not available
-    message(STATUS "Building FTL with TLS support: NO")
-    target_compile_definitions(civetweb PRIVATE NO_SSL)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "..." FORCE)
 endif()
 
 # After finishing building the FTL binary, we append the sha256sum of the binary
 # in raw form to itself and print the checksum to the console
 add_custom_command(TARGET pihole-FTL POST_BUILD COMMENT "Appending sha256sum to pihole-FTL"
+        COMMAND strip --strip-unneeded --remove-section=.comment --remove-section=.note $<TARGET_FILE:pihole-FTL>
         COMMAND echo -n "SHA256 checksum of pihole-FTL: " && sha256sum $<TARGET_FILE:pihole-FTL> | cut -d ' ' -f 1
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:pihole-FTL> $<TARGET_FILE_DIR:pihole-FTL>/pihole-FTL.tmp
         COMMAND echo -n "sha256sum" >> $<TARGET_FILE:pihole-FTL>.tmp

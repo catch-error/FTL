@@ -12,8 +12,6 @@
 #include "webserver/http-common.h"
 #include "webserver/json_macros.h"
 #include "api.h"
-// {s,g}et_blockingstatus()
-#include "config/setupVars.h"
 // set_blockingmode_timer()
 #include "timers.h"
 #include "shmem.h"

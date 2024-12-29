@@ -23,14 +23,10 @@
 #include "database/sqlite3.h"
 // dbquery()
 #include "database/common.h"
-// MAX_ROTATIONS
-#include "files.h"
 //basename()
 #include <libgen.h>
 // restart_ftl()
 #include "signals.h"
-// create_migration_target_v6()
-#include "config/config.h"
 
 #define MAXFILESIZE (50u*1024*1024)
 
@@ -265,9 +261,6 @@ static int api_teleporter_POST(struct ftl_conn *api)
 		                       "ZIP archive too large",
 		                       NULL);
 	}
-
-	// Ensure v6 migration directory exists
-	create_migration_target_v6();
 
 	// Check if we received something that claims to be a ZIP archive
 	// - filename should end in ".zip"
@@ -726,110 +719,9 @@ static int process_received_tar_gz(struct ftl_conn *api, struct upload_data *dat
 		}
 	}
 
-	// Temporarily write further files to to disk so we can import them on restart
-	struct {
-		const char *archive_name;
-		const char *destination;
-	} extract_files[] = {
-		{
-			// i = 0
-			.archive_name = "custom.list",
-			.destination = DNSMASQ_CUSTOM_LIST_LEGACY
-		},{
-			// i = 1
-			.archive_name = "dhcp.leases",
-			.destination = DHCPLEASESFILE
-		},{
-			// i = 2
-			.archive_name = "pihole-FTL.conf",
-			.destination = GLOBALCONFFILE_LEGACY
-		},{
-			// i = 3
-			.archive_name = "setupVars.conf",
-			.destination = config.files.setupVars.v.s
-		},{
-			.archive_name = "dnsmasq.d/05-pihole-custom-cname.conf",
-			.destination = DNSMASQ_CNAMES
-		}
-	};
-	for(size_t i = 0; i < sizeof(extract_files) / sizeof(*extract_files); i++)
-	{
-		size_t fileSize = 0u;
-		const char *file = find_file_in_tar(archive, archive_size, extract_files[i].archive_name, &fileSize);
-
-		if(data->import != NULL && i == 1 && !JSON_KEY_TRUE(data->import, "dhcp_leases"))
-		{
-			log_info("Skipping import of \"%s\" as it was not requested for import",
-			         extract_files[i].archive_name);
-			continue;
-		}
-		// all other values of i belong to config files
-		else if(data->import != NULL && !JSON_KEY_TRUE(data->import, "config"))
-		{
-			log_info("Skipping import of \"%s\" as it was not requested for import",
-			         extract_files[i].archive_name);
-			continue;
-		}
-
-		if(file != NULL && fileSize > 0u)
-		{
-			// Write file to disk
-			log_info("Writing file \"%s\" (%zu bytes) to \"%s\"",
-			         extract_files[i].archive_name, fileSize, extract_files[i].destination);
-			FILE *fp = fopen(extract_files[i].destination, "wb");
-			if(fp == NULL)
-			{
-				log_err("Unable to open file \"%s\" for writing: %s", extract_files[i].destination, strerror(errno));
-				continue;
-			}
-
-			// Restrict permissions to owner read/write only
-			if(fchmod(fileno(fp), S_IRUSR | S_IWUSR) != 0)
-				log_warn("Unable to set permissions on file \"%s\": %s", extract_files[i].destination, strerror(errno));
-
-			// Write file to disk
-			if(fwrite(file, fileSize, 1, fp) != 1)
-			{
-				log_err("Unable to write file \"%s\": %s", extract_files[i].destination, strerror(errno));
-				fclose(fp);
-				continue;
-			}
-			fclose(fp);
-			JSON_COPY_STR_TO_ARRAY(imported_files, extract_files[i].destination);
-		}
-	}
-
-	// Append WEB_PORTS to setupVars.conf
-	FILE *fp = fopen(config.files.setupVars.v.s, "a");
-	if(fp == NULL)
-		log_err("Unable to open file \"%s\" for appending: %s", config.files.setupVars.v.s, strerror(errno));
-	else
-	{
-		fprintf(fp, "WEB_PORTS=%s\n", config.webserver.port.v.s);
-		fclose(fp);
-	}
-
 	// Remove pihole.toml to prevent it from being imported on restart
 	if(remove(GLOBALTOMLPATH) != 0)
 		log_err("Unable to remove file \"%s\": %s", GLOBALTOMLPATH, strerror(errno));
-
-	// Remove all rotated pihole.toml files to avoid automatic config
-	// restore on restart
-	for(unsigned int i = MAX_ROTATIONS; i > 0; i--)
-	{
-		char *fname = strdup(GLOBALTOMLPATH);
-		char *filename = basename(fname);
-		// extra 6 bytes is enough space for up to 999 rotations ("/", ".", "\0", "999")
-		const size_t buflen = strlen(filename) + strlen(BACKUP_DIR) + 6;
-		char *path = calloc(buflen, sizeof(char));
-		snprintf(path, buflen, BACKUP_DIR"/%s.%u", filename, i);
-
-		// Remove file (if it exists)
-		if(remove(path) != 0 && errno != ENOENT)
-			log_err("Unable to remove file \"%s\": %s", path, strerror(errno));
-
-		free(fname);
-	}
 
 	// Free allocated memory
 	free_upload_data(data);

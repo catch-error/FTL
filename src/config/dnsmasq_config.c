@@ -22,8 +22,6 @@
 #include "webserver/cJSON/cJSON.h"
 // directory_exists()
 #include "files.h"
-// trim_whitespace()
-#include "config/setupVars.h"
 // run_dnsmasq_main()
 #include "args.h"
 // optind
@@ -749,6 +747,10 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 		return false;
 	}
 
+	// Chown file if we are root
+	if(geteuid() == 0)
+		chown_pihole(DNSMASQ_TEMP_CONF, NULL);
+
 	log_debug(DEBUG_CONFIG, "Testing "DNSMASQ_TEMP_CONF);
 	if(test_config && !test_dnsmasq_config(errbuf))
 	{
@@ -800,183 +802,6 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 	return true;
 }
 
-bool read_legacy_dhcp_static_config(void)
-{
-	// Check if file exists, if not, there is nothing to do
-	const char *path = DNSMASQ_STATIC_LEASES;
-	if(!file_exists(path))
-		return true;
-
-	FILE *fp = fopen(path, "r");
-	if(!fp)
-	{
-		log_err("Cannot read %s for reading, unable to import static leases: %s",
-		        path, strerror(errno));
-		return false;
-	}
-
-	char *linebuffer = NULL;
-	size_t size = 0u;
-	errno = 0;
-	unsigned int j = 0;
-	while(getline(&linebuffer, &size, fp) != -1)
-	{
-		// Check if memory allocation failed
-		if(linebuffer == NULL)
-			break;
-
-		// Skip lines with other keys
-		if((strstr(linebuffer, "dhcp-host=")) == NULL)
-			continue;
-
-		// Note: value is still a pointer into the linebuffer
-		char *value = find_equals(linebuffer) + 1;
-		// Trim whitespace at beginning and end, this function
-		// modifies the string inplace
-		trim_whitespace(value);
-
-		// Add entry to config.dhcp.hosts
-		cJSON *item = cJSON_CreateString(value);
-		cJSON_AddItemToArray(config.dhcp.hosts.v.json, item);
-
-		log_debug(DEBUG_CONFIG, DNSMASQ_STATIC_LEASES": Setting %s[%u] = %s\n",
-		          config.dhcp.hosts.k, j++, item->valuestring);
-	}
-
-	// Free allocated memory
-	free(linebuffer);
-
-	// Close file
-	if(fclose(fp) != 0)
-	{
-		log_err("Cannot close %s: %s", path, strerror(errno));
-		return false;
-	}
-
-	return true;
-}
-
-
-bool read_legacy_cnames_config(void)
-{
-	// Check if file exists, if not, there is nothing to do
-	const char *path = DNSMASQ_CNAMES;
-	if(!file_exists(path))
-		return true;
-
-	FILE *fp = fopen(path, "r");
-	if(!fp)
-	{
-		log_err("Cannot read %s for reading, unable to import list of custom cnames: %s",
-		        path, strerror(errno));
-		return false;
-	}
-
-	char *linebuffer = NULL;
-	size_t size = 0u;
-	errno = 0;
-	unsigned int j = 0;
-	while(getline(&linebuffer, &size, fp) != -1)
-	{
-		// Check if memory allocation failed
-		if(linebuffer == NULL)
-			break;
-
-		// Skip lines with other keys
-		if((strstr(linebuffer, "cname=")) == NULL)
-			continue;
-
-		// Note: value is still a pointer into the linebuffer
-		char *value = find_equals(linebuffer) + 1;
-		// Trim whitespace at beginning and end, this function
-		// modifies the string inplace
-		trim_whitespace(value);
-
-		// Add entry to config.dns.cnameRecords
-		cJSON *item = cJSON_CreateString(value);
-		cJSON_AddItemToArray(config.dns.cnameRecords.v.json, item);
-
-		log_debug(DEBUG_CONFIG, DNSMASQ_CNAMES": Setting %s[%u] = %s\n",
-		          config.dns.cnameRecords.k, j++, item->valuestring);
-	}
-
-	// Free allocated memory
-	free(linebuffer);
-
-	// Close file
-	if(fclose(fp) != 0)
-	{
-		log_err("Cannot close %s: %s", path, strerror(errno));
-		return false;
-	}
-
-	return true;
-}
-
-bool read_legacy_custom_hosts_config(void)
-{
-	// Check if file exists, if not, there is nothing to do
-	const char *path = DNSMASQ_CUSTOM_LIST_LEGACY;
-	const char *target = DNSMASQ_CUSTOM_LIST_LEGACY_TARGET;
-	if(!file_exists(path))
-		return true;
-
-	FILE *fp = fopen(path, "r");
-	if(!fp)
-	{
-		log_err("Cannot read %s for reading, unable to import list of custom cnames: %s",
-		        path, strerror(errno));
-		return false;
-	}
-
-	char *linebuffer = NULL;
-	size_t size = 0u;
-	errno = 0;
-	while(getline(&linebuffer, &size, fp) != -1)
-	{
-		// Check if memory allocation failed
-		if(linebuffer == NULL)
-			break;
-
-		// Import lines in the file
-		// Trim whitespace at beginning and end, this function
-		// modifies the string inplace
-		trim_whitespace(linebuffer);
-
-		// Skip empty lines
-		if(strlen(linebuffer) == 0 ||
-		   linebuffer[0] == '\n' ||
-		   linebuffer[0] == '\r' ||
-		   linebuffer[0] == '\0')
-			continue;
-
-		// Skip comments
-		if(linebuffer[0] == '#')
-			continue;
-
-		// Add entry to config.dns.hosts
-		cJSON *item = cJSON_CreateString(linebuffer);
-		cJSON_AddItemToArray(config.dns.hosts.v.json, item);
-	}
-
-	// Free allocated memory
-	free(linebuffer);
-
-	// Close file
-	if(fclose(fp) != 0)
-	{
-		log_err("Cannot close %s: %s", path, strerror(errno));
-		return false;
-	}
-
-	// Move file to backup location
-	log_info("Moving %s to %s", path, target);
-	if(rename(path, target) != 0)
-		log_warn("Unable to move %s to %s: %s", path, target, strerror(errno));
-
-	return true;
-}
-
 bool write_custom_list(void)
 {
 	// Ensure that the directory exists
@@ -986,82 +811,6 @@ bool write_custom_list(void)
 		if(mkdir(DNSMASQ_HOSTSDIR, 0755) != 0)
 		{
 			log_err("Cannot create directory "DNSMASQ_HOSTSDIR": %s", strerror(errno));
-			return false;
-		}
-	}
-
-	log_debug(DEBUG_CONFIG, "Opening "DNSMASQ_CUSTOM_LIST_LEGACY".tmp for writing");
-	FILE *custom_list = fopen(DNSMASQ_CUSTOM_LIST_LEGACY".tmp", "w");
-	// Return early if opening failed
-	if(!custom_list)
-	{
-		log_err("Cannot open "DNSMASQ_CUSTOM_LIST_LEGACY".tmp for writing, unable to update custom.list: %s", strerror(errno));
-		return false;
-	}
-
-	// Lock file, may block if the file is currently opened
-	if(flock(fileno(custom_list), LOCK_EX) != 0)
-	{
-		log_err("Cannot open "DNSMASQ_CUSTOM_LIST_LEGACY".tmp in exclusive mode: %s", strerror(errno));
-		fclose(custom_list);
-		return false;
-	}
-
-	write_config_header(custom_list, "Custom DNS entries (HOSTS file)");
-	fputc('\n', custom_list);
-
-	const int N = cJSON_GetArraySize(config.dns.hosts.v.json);
-	if(N > 0)
-	{
-		for(int i = 0; i < N; i++)
-		{
-			cJSON *entry = cJSON_GetArrayItem(config.dns.hosts.v.json, i);
-			if(entry != NULL && cJSON_IsString(entry))
-				fprintf(custom_list, "%s\n", entry->valuestring);
-		}
-		fputc('\n', custom_list);
-	}
-
-	if(N == 1)
-		fprintf(custom_list, "\n# There is %d entry in this file\n", N);
-	else if(N > 1)
-		fprintf(custom_list, "\n# There are %d entries in this file\n", N);
-	else if(N == 0)
-		fputs("\n# There are currently no entries in this file\n", custom_list);
-
-	// Unlock file
-	if(flock(fileno(custom_list), LOCK_UN) != 0)
-	{
-		log_err("Cannot release lock on custom.list: %s", strerror(errno));
-		fclose(custom_list);
-		return false;
-	}
-
-	// Close file
-	if(fclose(custom_list) != 0)
-	{
-		log_err("Cannot close custom.list: %s", strerror(errno));
-		return false;
-	}
-
-	// Check if the new config file is different from the old one
-	// Skip the first 24 lines as they contain the header
-	if(files_different(DNSMASQ_CUSTOM_LIST_LEGACY".tmp", DNSMASQ_CUSTOM_LIST, 24))
-	{
-		if(rename(DNSMASQ_CUSTOM_LIST_LEGACY".tmp", DNSMASQ_CUSTOM_LIST) != 0)
-		{
-			log_err("Cannot install custom.list: %s", strerror(errno));
-			return false;
-		}
-		log_debug(DEBUG_CONFIG, "HOSTS file written to "DNSMASQ_CUSTOM_LIST);
-	}
-	else
-	{
-		log_debug(DEBUG_CONFIG, "custom.list unchanged");
-		// Remove temporary config file
-		if(remove(DNSMASQ_CUSTOM_LIST_LEGACY".tmp") != 0)
-		{
-			log_err("Cannot remove temporary custom.list: %s", strerror(errno));
 			return false;
 		}
 	}

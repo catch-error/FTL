@@ -31,8 +31,6 @@
 #include "config/dnsmasq_config.h"
 // lock_shm(), unlock_shm()
 #include "shmem.h"
-// rotate_file()
-#include "files.h"
 // cJSON
 #include "webserver/cJSON/cJSON.h"
 // set_event()
@@ -177,13 +175,13 @@ const char *generate_teleporter_zip(mz_zip_archive *zip, char filename[128], voi
 		return "Failed to add /etc/hosts to heap ZIP archive!";
 	}
 
-	// Add /etc/pihole/dhcp.lease to the ZIP archive if it exists
+	// Add /var/cache/pihole/dhcp.lease to the ZIP archive if it exists
 	file_comment = "DHCP leases file";
-	file_path = "/etc/pihole/dhcp.leases";
+	file_path = "/var/cache/pihole/dhcp.leases";
 	if(file_exists(file_path) && !mz_zip_writer_add_file(zip, file_path+1, file_path, file_comment, (uint16_t)strlen(file_comment), MZ_BEST_COMPRESSION))
 	{
 		mz_zip_writer_end(zip);
-		return "Failed to add /etc/pihole/dhcp.leases to heap ZIP archive!";
+		return "Failed to add /var/cache/pihole/dhcp.leases to heap ZIP archive!";
 	}
 
 	const char *directory = "/etc/dnsmasq.d";
@@ -313,7 +311,7 @@ static const char *test_and_import_pihole_toml(void *ptr, size_t size, char * co
 	// a temporary config struct (teleporter_config)
 	struct config teleporter_config = { 0 };
 	duplicate_config(&teleporter_config, &config);
-	if(!readFTLtoml(NULL, &teleporter_config, toml, true, NULL, 0))
+	if(!readFTLtoml(NULL, &teleporter_config, toml, true, NULL))
 		return "File etc/pihole/pihole.toml in ZIP archive contains invalid TOML configuration";
 
 	// Test dnsmasq config in the imported configuration
@@ -330,7 +328,6 @@ static const char *test_and_import_pihole_toml(void *ptr, size_t size, char * co
 
 	// Write new pihole.toml to disk, the dnsmaq config was already written above
 	// Also write the custom list to disk
-	rotate_files(GLOBALTOMLPATH, NULL);
 	writeFTLtoml(true);
 	write_custom_list();
 
@@ -344,9 +341,6 @@ static const char *import_dhcp_leases(void *ptr, size_t size, char * const hint)
 	// When we reach this point, we know that the file is a valid dhcp.leases file.
 	// We can now safely overwrite the current dhcp.leases file with the one from the ZIP archive
 	// Nevertheless, we rotate the current dhcp.leases file to keep a backup of the previous version
-
-	// Rotate current dhcp.leases file
-	rotate_files(DHCPLEASESFILE, NULL);
 
 	// Write new dhcp.leases file to disk
 	FILE *fp = fopen(DHCPLEASESFILE, "w");

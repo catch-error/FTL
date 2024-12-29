@@ -317,9 +317,11 @@ enum adlist_type {
 } __attribute__ ((packed));
 
 enum cert_check {
+	CERT_ERROR,
 	CERT_FILE_NOT_FOUND,
 	CERT_CANNOT_PARSE_CERT,
 	CERT_CANNOT_PARSE_KEY,
+	CERT_KEY_MISMATCH,
 	CERT_DOMAIN_MISMATCH,
 	CERT_DOMAIN_MATCH,
 	CERT_OKAY
