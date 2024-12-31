@@ -815,5 +815,81 @@ bool write_custom_list(void)
 		}
 	}
 
+	log_debug(DEBUG_CONFIG, "Opening "DNSMASQ_CUSTOM_LIST".tmp for writing");
+	FILE *custom_list = fopen(DNSMASQ_CUSTOM_LIST".tmp", "w");
+	// Return early if opening failed
+	if(!custom_list)
+	{
+		log_err("Cannot open "DNSMASQ_CUSTOM_LIST".tmp for writing, unable to update custom.list: %s", strerror(errno));
+		return false;
+	}
+
+	// Lock file, may block if the file is currently opened
+	if(flock(fileno(custom_list), LOCK_EX) != 0)
+	{
+		log_err("Cannot open "DNSMASQ_CUSTOM_LIST".tmp in exclusive mode: %s", strerror(errno));
+		fclose(custom_list);
+		return false;
+	}
+
+	write_config_header(custom_list, "Custom DNS entries (HOSTS file)");
+	fputc('\n', custom_list);
+
+	const int N = cJSON_GetArraySize(config.dns.hosts.v.json);
+	if(N > 0)
+	{
+		for(int i = 0; i < N; i++)
+		{
+			cJSON *entry = cJSON_GetArrayItem(config.dns.hosts.v.json, i);
+			if(entry != NULL && cJSON_IsString(entry))
+				fprintf(custom_list, "%s\n", entry->valuestring);
+		}
+		fputc('\n', custom_list);
+	}
+
+	if(N == 1)
+		fprintf(custom_list, "\n# There is %d entry in this file\n", N);
+	else if(N > 1)
+		fprintf(custom_list, "\n# There are %d entries in this file\n", N);
+	else if(N == 0)
+		fputs("\n# There are currently no entries in this file\n", custom_list);
+
+	// Unlock file
+	if(flock(fileno(custom_list), LOCK_UN) != 0)
+	{
+		log_err("Cannot release lock on custom.list: %s", strerror(errno));
+		fclose(custom_list);
+		return false;
+	}
+
+	// Close file
+	if(fclose(custom_list) != 0)
+	{
+		log_err("Cannot close custom.list: %s", strerror(errno));
+		return false;
+	}
+
+	// Check if the new config file is different from the old one
+	// Skip the first 24 lines as they contain the header
+	if(files_different(DNSMASQ_CUSTOM_LIST".tmp", DNSMASQ_CUSTOM_LIST, 24))
+	{
+		if(rename(DNSMASQ_CUSTOM_LIST".tmp", DNSMASQ_CUSTOM_LIST) != 0)
+		{
+			log_err("Cannot install custom.list: %s", strerror(errno));
+			return false;
+		}
+		log_debug(DEBUG_CONFIG, "HOSTS file written to "DNSMASQ_CUSTOM_LIST);
+	}
+	else
+	{
+		log_debug(DEBUG_CONFIG, "custom.list unchanged");
+		// Remove temporary config file
+		if(remove(DNSMASQ_CUSTOM_LIST".tmp") != 0)
+		{
+			log_err("Cannot remove temporary custom.list: %s", strerror(errno));
+			return false;
+		}
+	}
+
 	return true;
 }
