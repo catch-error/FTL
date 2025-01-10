@@ -65,32 +65,32 @@ FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *m
 // Open the TOML file for reading or writing
 void closeFTLtoml(FILE *fp)
 {
-        // Release file lock
-        const int fn = fileno(fp);
-        if(flock(fn, LOCK_UN) != 0)
-                log_err("Cannot release lock on FTL's config file: %s", strerror(errno));
+	// Release file lock
+	const int fn = fileno(fp);
+	if(flock(fn, LOCK_UN) != 0)
+		log_err("Cannot release lock on FTL's config file: %s", strerror(errno));
 
-        // Get access mode
-        const int mode = fcntl(fn, F_GETFL);
-        if (mode == -1)
-                log_err("Cannot get access mode for FTL's config file: %s", strerror(errno));
+	// Get access mode
+	const int mode = fcntl(fn, F_GETFL);
+	if (mode == -1)
+		log_err("Cannot get access mode for FTL's config file: %s", strerror(errno));
 
-        // Close file
-        if(fclose(fp) != 0)
-                log_err("Cannot close FTL's config file: %s", strerror(errno));
+	// Close file
+	if(fclose(fp) != 0)
+		log_err("Cannot close FTL's config file: %s", strerror(errno));
 
-        // Chown file if we are root
-        if(geteuid() == 0 && mode != -1)
-        {
-                // If we are in read-only mode, we are closing the global TOML file. If, however,
-                // we are in write mode, we have actually been writing to the temporary file
-                // that will subsequently be moved into place. In either case, ensure that the
-                // permissions of the file we have touched here are correct.
-                const bool read_only = (mode & O_ACCMODE) == O_RDONLY;
-                chown_pihole(read_only ? GLOBALTOMLPATH : GLOBALTOMLPATH".tmp", NULL);
-        }
+	// Chown file if we are root
+	if(geteuid() == 0 && mode != -1)
+	{
+		// If we are in read-only mode, we are closing the global TOML file. If, however,
+		// we are in write mode, we have actually been writing to the temporary file
+		// that will subsequently be moved into place. In either case, ensure that the
+		// permissions of the file we have touched here are correct.
+		const bool read_only = (mode & O_ACCMODE) == O_RDONLY;
+		chown_pihole(read_only ? GLOBALTOMLPATH : GLOBALTOMLPATH".tmp", NULL);
+	}
 
-        return;
+    return;
 }
 
 // Print a string to a TOML file, escaping special characters as necessary
