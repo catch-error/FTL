@@ -952,7 +952,10 @@ bool _FTL_new_query(const unsigned int flags, const char *name,
 	}
 
 	// Try to obtain MAC address from dnsmasq's cache (also asks the kernel)
-	if(client->hwlen < 1)
+	// Don't do this for internally generated queries (e.g., DNSSEC), if the
+	// MAC address is already known or if the netlink socket is not available
+	// (e.g., when retrying a query using TCP after UDP truncation)
+	if(!internal_query && client->hwlen < 1 && daemon->netlinkfd > 0)
 	{
 		client->hwlen = find_mac(addr, client->hwaddr, 1, time(NULL));
 		if(config.debug.arp.v.b)
@@ -1822,12 +1825,12 @@ bool FTL_CNAME(const char *dst, const char *src, const int id)
 		else if(query->status == QUERY_REGEX)
 		{
 			// Get parent and child DNS cache entries
-			const unsigned int parent_cacheID = query->cacheID > -1 ? query->cacheID : findCacheID(parent_domainID, clientID, query->type, false);
-			const unsigned int child_cacheID = findCacheID(child_domainID, clientID, query->type, false);
+			const int parent_cacheID = query->cacheID > -1 ? query->cacheID : findCacheID(parent_domainID, clientID, query->type, false);
+			const int child_cacheID = findCacheID(child_domainID, clientID, query->type, false);
 
 			// Get cache pointers
-			DNSCacheData *parent_cache = getDNSCache(parent_cacheID, true);
-			const DNSCacheData *child_cache = getDNSCache(child_cacheID, true);
+			DNSCacheData *parent_cache = parent_cacheID < 0 ? NULL : getDNSCache(parent_cacheID, true);
+			const DNSCacheData *child_cache = child_cacheID < 0 ? NULL : getDNSCache(child_cacheID, true);
 
 			// Propagate ID of responsible regex up from the child to the parent
 			// domain (but only if set)
