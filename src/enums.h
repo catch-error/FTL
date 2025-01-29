@@ -155,6 +155,7 @@ enum debug_flag {
 	DEBUG_EXTRA,
 	DEBUG_RESERVED,
 	DEBUG_NTP,
+	DEBUG_NETLINK,
 	DEBUG_MAX
 } __attribute__ ((packed));
 
@@ -270,6 +271,7 @@ enum message_type {
 	CONNECTION_ERROR_MESSAGE,
 	NTP_MESSAGE,
 	VERIFY_MESSAGE,
+	GRAVITY_RESTORED_MESSAGE,
 	MAX_MESSAGE,
 } __attribute__ ((packed));
 
