@@ -66,7 +66,7 @@ static void _query_set_reply(const unsigned int flags, const enum reply_type rep
 static bool FTL_check_blocking(const unsigned int queryID, const unsigned int domainID, const unsigned int clientID);
 static void query_blocked(queriesData *query, domainsData *domain, clientsData *client, const enum query_status new_status);
 static void FTL_forwarded(const unsigned int flags, const char *name, const union all_addr *addr, unsigned short port, const int id, const char *file, const int line);
-static void FTL_reply(const unsigned int flags, const char *name, const union all_addr *addr, const char *arg, unsigned short type, const int id, const char *file, const int line);
+static void FTL_reply(const unsigned int flags, const char *name, const union all_addr *addr, const char *arg, const int id, const char *file, const int line);
 static void FTL_upstream_error(const union all_addr *addr, const unsigned int flags, const int id, const char *file, const int line);
 static void FTL_dnssec(const char *result, const union all_addr *addr, const int id, const char *file, const int line);
 static void mysockaddr_extract_ip_port(const union mysockaddr *server, char ip[ADDRSTRLEN+1], in_port_t *port);
@@ -181,7 +181,7 @@ void FTL_hook(unsigned int flags, const char *name, const union all_addr *addr, 
 		// otherwise, flags will be F_UPSTREAM and the type is not set
 		// (== 0)
 	else
-		FTL_reply(flags, name, addr, arg, type, id, path, line);
+		FTL_reply(flags, name, addr, arg, id, path, line);
 }
 
 // This is inspired by make_local_answer()
@@ -2119,7 +2119,7 @@ static void update_upstream(queriesData *query, const int id)
 }
 
 static void FTL_reply(const unsigned int flags, const char *name, const union all_addr *addr,
-                      const char *arg, unsigned short type, const int id, const char *file, const int line)
+                      const char *arg, const int id, const char *file, const int line)
 {
 	const double now = double_time();
 	// If domain is "pi.hole", we skip this query
@@ -2143,9 +2143,18 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 		return;
 	}
 
-	// Check if this reply came from our local cache (type == 0 is non-query but has F_UPSTREAM)
+	// Get and check query pointer
+	queriesData *query = getQuery(queryID, true);
+	if(query == NULL)
+	{
+		// Nothing to be done here
+		unlock_shm();
+		return;
+	}
+
+	// Check if this reply came from our local cache (query->type == TYPE_NONE is non-query but has F_UPSTREAM)
 	bool cached = false;
-	if(!(flags & F_UPSTREAM) || type == 0)
+	if(!(flags & F_UPSTREAM) || query->type == TYPE_NONE)
 	{
 		cached = true;
 		if((flags & F_HOSTS) || // hostname.list, /etc/hosts and others
@@ -2215,7 +2224,7 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 		// Swap display name with answer if this is a reverse query
 		// Check for reverse query by looking at the query type not only
 		// the flag as some PTR queries are not flagged (DNS-SD)
-		if(flags & F_REVERSE || type == T_PTR)
+		if(flags & F_REVERSE || query->type == TYPE_PTR)
 		{
 			const char *tmp = dispname;
 			dispname = answer;
@@ -2249,15 +2258,6 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 			// Log RCODE if available
 			log_debug(DEBUG_QUERIES, "     RCODE: %s (%d)", rcodestr, addr->log.rcode);
 		}
-	}
-
-	// Get and check query pointer
-	queriesData *query = getQuery(queryID, true);
-	if(query == NULL)
-	{
-		// Nothing to be done here
-		unlock_shm();
-		return;
 	}
 
 	// EDE analysis
@@ -2359,7 +2359,7 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 		// Mark query for updating in the database
 		query->flags.database.changed = true;
 	}
-	else if((flags & (F_FORWARD | F_UPSTREAM)) && isExactMatch && type != 0)
+	else if((flags & (F_FORWARD | F_UPSTREAM)) && isExactMatch && query->type != TYPE_NONE)
 	{
 		// type != 0: Answered from upstream server
 		// type == 0: Answered from cache (probably a non-query reply)
@@ -2428,7 +2428,7 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 		// Mark query for updating in the database
 		query->flags.database.changed = true;
 	}
-	else if(flags & F_REVERSE || type == T_PTR)
+	else if(flags & F_REVERSE || query->type == TYPE_PTR)
 	{
 		// isExactMatch is not used here as the PTR is special.
 		// Example:
@@ -2482,7 +2482,7 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 	else if(config.debug.flags.v.b)
 	{
 		log_warn("Unknown upstream REPLY, exact: %s, type: %u",
-		         isExactMatch ? "true" : "false", type);
+		         isExactMatch ? "true" : "false", query->type);
 	}
 
 	if(query && option_bool(OPT_DNSSEC_PROXY))
@@ -3785,10 +3785,9 @@ void get_dnsmasq_metrics_obj(cJSON *json)
 		cJSON_AddNumberToObject(json, get_metric_name(i), daemon->metrics[i]);
 }
 
-void FTL_connection_error(const char *reason, const union mysockaddr *addr)
+void FTL_connection_error(const char *reason, const union mysockaddr *addr, const int errnum)
 {
-	// Make a private copy of the error
-	const int errnum = errno;
+	// Get the error message
 	const char *error = strerror(errnum);
 
 	// Set log priority
