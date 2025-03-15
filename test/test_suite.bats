@@ -529,9 +529,10 @@
   before="$(grep -c ^ /var/log/pihole/FTL.log)"
 
   # Run test
-  run bash -c "dig A umbrella.ftl @127.0.0.1"
+  run bash -c "dig A umbrella.ftl +short @127.0.0.1"
   printf "%s\n" "${lines[@]}"
-  [[ ${lines[@]} == *"EDE: 15 (Blocked): (upstream IP)"* ]]
+  [[ ${lines[0]} == "146.112.61.104" ]]
+  [[ ${lines[1]} == "" ]]
 
   # Get number of lines in the log after the test
   after="$(grep -c ^ /var/log/pihole/FTL.log)"
@@ -548,7 +549,6 @@
   [[ ${lines[@]} == *"DEBUG_QUERIES: **** forwarded umbrella.ftl to 127.0.0.1#5555"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: blocked upstream with known address (IPv4)"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: DNS cache: A/127.0.0.1/umbrella.ftl -> EXTERNAL_BLOCKED_IP"* ]]
-  [[ ${lines[@]} == *"DEBUG_QUERIES:   Adding RR: \"umbrella.ftl A 0.0.0.0\""* ]]
 }
 
 @test "Upstream blocked domain: IP is recognized (cached)" {
@@ -556,9 +556,10 @@
   before="$(grep -c ^ /var/log/pihole/FTL.log)"
 
   # Run test
-  run bash -c "dig A umbrella.ftl @127.0.0.1"
+  run bash -c "dig A umbrella.ftl +short @127.0.0.1"
   printf "%s\n" "${lines[@]}"
-  [[ ${lines[@]} == *"EDE: 15 (Blocked): (upstream IP)"* ]]
+  [[ ${lines[0]} == "146.112.61.104" ]]
+  [[ ${lines[1]} == "" ]]
 
   # Get number of lines in the log after the test
   after="$(grep -c ^ /var/log/pihole/FTL.log)"
@@ -572,8 +573,10 @@
   done <<< "${log}"
   printf "%s\n" "${lines[@]}"
   [[ ${lines[@]} == *"DEBUG_QUERIES: umbrella.ftl is known as blocked upstream with known address (expires in"* ]]
+  # Test for NOT forwarded ...
   [[ ${lines[@]} != *"DEBUG_QUERIES: **** forwarded umbrella.ftl to 127.0.0.1#5555"* ]]
-  [[ ${lines[@]} == *"DEBUG_QUERIES:   Adding RR: \"umbrella.ftl A 0.0.0.0\""* ]]
+  # ... but cached
+  [[ ${lines[@]} == *"DEBUG_QUERIES: **** got cache reply: umbrella.ftl is 146.112.61.104"* ]]
 }
 
 @test "Upstream blocked domain: IP is recognized (IPv6)" {
@@ -581,8 +584,10 @@
   before="$(grep -c ^ /var/log/pihole/FTL.log)"
 
   # Run test
-  run bash -c "dig AAAA umbrella.ftl @127.0.0.1"
+  run bash -c "dig AAAA umbrella.ftl +short @127.0.0.1"
   printf "%s\n" "${lines[@]}"
+  [[ ${lines[0]} == "::ffff:146.112.61.104" ]]
+  [[ ${lines[1]} == "" ]]
 
   # Get number of lines in the log after the test
   after="$(grep -c ^ /var/log/pihole/FTL.log)"
@@ -599,7 +604,6 @@
   [[ ${lines[@]} == *"DEBUG_QUERIES: **** forwarded umbrella.ftl to 127.0.0.1#5555"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: blocked upstream with known address (IPv6)"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: DNS cache: AAAA/127.0.0.1/umbrella.ftl -> EXTERNAL_BLOCKED_IP"* ]]
-  [[ ${lines[@]} == *"DEBUG_QUERIES:   Adding RR: \"umbrella.ftl AAAA ::\""* ]]
 }
 
 @test "Upstream blocked domain: IP is recognized (multi)" {
@@ -607,8 +611,11 @@
   before="$(grep -c ^ /var/log/pihole/FTL.log)"
 
   # Run test
-  run bash -c "dig A umbrella-multi.ftl @127.0.0.1"
+  run bash -c "dig A umbrella-multi.ftl +short @127.0.0.1"
   printf "%s\n" "${lines[@]}"
+  [[ "${lines[@]}" == *"146.112.61.104"* ]]
+  [[ "${lines[@]}" == *"8.8.8.8"* ]]
+  [[ "${lines[@]}" == *"1.2.3.4"* ]]
 
   # Get number of lines in the log after the test
   after="$(grep -c ^ /var/log/pihole/FTL.log)"
@@ -624,7 +631,6 @@
   [[ ${lines[@]} == *"DEBUG_QUERIES: DNS cache: A/127.0.0.1/umbrella-multi.ftl is not blocked (domainlist ID: -1)"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: **** forwarded umbrella-multi.ftl to 127.0.0.1#5555"* ]]
   [[ ${lines[@]} == *"DEBUG_QUERIES: DNS cache: A/127.0.0.1/umbrella-multi.ftl -> EXTERNAL_BLOCKED_IP"* ]]
-  [[ ${lines[@]} == *"DEBUG_QUERIES:   Adding RR: \"umbrella-multi.ftl A 0.0.0.0\""* ]]
 }
 
 @test "Upstream blocked domain: EDE 15 is recognized" {
@@ -750,7 +756,7 @@
 @test "No ERROR messages in FTL.log (besides known/intended error)" {
   run bash -c 'grep "ERROR: " /var/log/pihole/FTL.log'
   printf "%s\n" "${lines[@]}"
-  run bash -c 'grep "ERROR: " /var/log/pihole/FTL.log | grep -c -v -E "(index\.html)|(Failed to create shared memory object)|(FTLCONF_debug_api is invalid)|(Failed to set|adjust time during NTP sync: Insufficient permissions)"'
+  run bash -c 'grep "ERROR: " /var/log/pihole/FTL.log | grep -c -v -E "(index\.html)|(Failed to create shared memory object)|(FTLCONF_debug_api is not a boolean)|(Failed to set|adjust time during NTP sync: Insufficient permissions)"'
   printf "count: %s\n" "${lines[@]}"
   [[ ${lines[0]} == "0" ]]
 }
@@ -1173,7 +1179,7 @@
 @test "API addresses reported correctly by CHAOS TXT local.api.ftl" {
   run bash -c 'dig CHAOS TXT local.api.ftl +short @127.0.0.1'
   printf "dig (full): %s\n" "${lines[@]}"
-  [[ ${lines[0]} == '"http://localhost:80/api/" "https://localhost:443/api/"' ]]
+  [[ ${lines[0]} == '"http://127.0.0.1:80/api/" "https://127.0.0.1:443/api/" "http://[::1]:80/api/" "https://[::1]:443/api/"' ]]
 }
 
 @test "API addresses reported by CHAOS TXT api.ftl identical to domain.api.ftl" {
@@ -1616,8 +1622,15 @@
   [[ ${lines[0]} == "  nice = -11 ### CHANGED (env), default = -10" ]]
 }
 
+@test "Capitalized Environmental variable is used and favored over config file" {
+  # The config file has 90 but we set FTLCONF_MISC_CHECK_SHMEM="91"
+  run bash -c 'grep "shmem = 91" /etc/pihole/pihole.toml'
+  printf "%s\n" "${lines[@]}"
+  [[ ${lines[0]} == "    shmem = 91 ### CHANGED (env), default = 90" ]]
+}
+
 @test "Correct number of environmental variables is logged" {
-  run bash -c 'grep -q "3 FTLCONF environment variables found (1 used, 1 invalid, 1 ignored)" /var/log/pihole/FTL.log'
+  run bash -c 'grep -q "4 FTLCONF environment variables found (2 used, 1 invalid, 1 ignored)" /var/log/pihole/FTL.log'
   printf "%s\n" "${lines[@]}"
   [[ $status == 0 ]]
 }
@@ -1629,7 +1642,7 @@
 }
 
 @test "Invalid environmental variable is logged" {
-  run bash -c 'grep -q "FTLCONF_debug_api is invalid" /var/log/pihole/FTL.log'
+  run bash -c 'grep -q "FTLCONF_debug_api is not a boolean" /var/log/pihole/FTL.log'
   printf "%s\n" "${lines[@]}"
   [[ $status == 0 ]]
 }
@@ -2099,7 +2112,7 @@
   [[ "${lines[0]}" == "[ 1.1.1.1 abc-custom.com def-custom.de, 2.2.2.2 äste.com steä.com ]" ]]
   run bash -c './pihole-FTL --config webserver.port'
   printf "%s\n" "${lines[@]}"
-  [[ "${lines[0]}" == "80o,[::]:80o,443so,[::]:443so" ]]
+  [[ "${lines[0]}" == "80o,443os,[::]:80o,[::]:443os" ]]
 }
 
 @test "Create, verify and re-import Teleporter file via CLI" {

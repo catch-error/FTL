@@ -14,8 +14,6 @@
 #include "log.h"
 // get_blocking_mode_str()
 #include "datastructure.h"
-// flock(), LOCK_SH
-#include <sys/file.h>
 // struct config
 #include "config/config.h"
 // JSON array functions
@@ -114,10 +112,20 @@ static bool test_dnsmasq_config(char errbuf[ERRBUF_SIZE])
 			// We can ignore EINTR as it just means that the wait
 			// was interrupted, so we just try again. All other
 			// errors are fatal and we break out of the loop
-			if(err != EINTR)
+			if(err != EINTR && err != EAGAIN && err != ECHILD)
 			{
 				log_err("Cannot wait for dnsmasq test: %s", strerror(err));
 				break;
+			}
+
+			// Check if the child exited too quickly for waitpid to
+			// catch it. We cannot get the return code in this case
+			// and have to check the pipe content instead
+			if(errno == ECHILD)
+			{
+				log_debug(DEBUG_CONFIG, "dnsmasq test exited too quickly for waitpid");
+				code = strstr(errbuf, "syntax check OK") != NULL ? EXIT_SUCCESS : EXIT_FAILURE;
+				goto check_return;
 			}
 		}
 
@@ -134,11 +142,12 @@ static bool test_dnsmasq_config(char errbuf[ERRBUF_SIZE])
 			        WCOREDUMP(status) ? "(core dumped)" : "");
 		}
 
+check_return:
 		// Check if the error message contains a line number. If so, we
 		// can append the offending line to the error message
 		if(code != EXIT_SUCCESS)
 		{
-			int lineno = get_lineno_from_string(errbuf);
+			const int lineno = get_lineno_from_string(errbuf);
 			if(lineno > 0)
 			{
 				const size_t errbuf_size = strlen(errbuf);
@@ -312,12 +321,7 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 	}
 
 	// Lock file, may block if the file is currently opened
-	if(flock(fileno(pihole_conf), LOCK_EX) != 0)
-	{
-		log_err("Cannot open "DNSMASQ_TEMP_CONF" in exclusive mode: %s", strerror(errno));
-		fclose(pihole_conf);
-		return false;
-	}
+	const bool locked = lock_file(pihole_conf, DNSMASQ_TEMP_CONF);
 
 	write_config_header(pihole_conf, "Dnsmasq config for Pi-hole's FTLDNS");
 	fputs("hostsdir="DNSMASQ_HOSTSDIR"\n", pihole_conf);
@@ -498,9 +502,9 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 			continue;
 		}
 
-		if(active == NULL || cidr == NULL || target == NULL || domain == NULL)
+		if(active == NULL || cidr == NULL || target == NULL)
 		{
-			log_err("Skipped invalid dns.revServers[%u]: %s", i, revServer->valuestring);
+			log_err("Skipped invalid dns.revServers[%u]: %s (not fully defined)", i, revServer->valuestring);
 			free(copy);
 			continue;
 		}
@@ -511,7 +515,7 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 
 		// If we have a reverse domain, we forward all queries to this domain to
 		// the same destination
-		if(strlen(domain) > 0)
+		if(domain != NULL && strlen(domain) > 0)
 		{
 			fprintf(pihole_conf, "server=/%s/%s\n", domain, target);
 
@@ -548,7 +552,7 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 		fputs("# DNS domain for both the DNS and DHCP server\n", pihole_conf);
 		if(!domain_revServer)
 		{
-			fputs("# This DNS domain in purely local. FTL may answer queries from\n", pihole_conf);
+			fputs("# This DNS domain is purely local. FTL may answer queries from\n", pihole_conf);
 			fputs("# /etc/hosts or DHCP but should never forward queries on that\n", pihole_conf);
 			fputs("# domain to any upstream servers\n", pihole_conf);
 			fprintf(pihole_conf, "domain=%s\n", conf->dns.domain.v.s);
@@ -755,12 +759,8 @@ bool __attribute__((const)) write_dnsmasq_config(struct config *conf, bool test_
 	fflush(pihole_conf);
 
 	// Unlock file
-	if(flock(fileno(pihole_conf), LOCK_UN) != 0)
-	{
-		log_err("Cannot release lock on dnsmasq config file: %s", strerror(errno));
-		fclose(pihole_conf);
-		return false;
-	}
+	if(locked)
+		unlock_file(pihole_conf, DNSMASQ_TEMP_CONF);
 
 	// Close file
 	if(fclose(pihole_conf) != 0)
@@ -847,12 +847,7 @@ bool write_custom_list(void)
 	}
 
 	// Lock file, may block if the file is currently opened
-	if(flock(fileno(custom_list), LOCK_EX) != 0)
-	{
-		log_err("Cannot open "DNSMASQ_CUSTOM_LIST".tmp in exclusive mode: %s", strerror(errno));
-		fclose(custom_list);
-		return false;
-	}
+	const bool locked = lock_file(custom_list, DNSMASQ_CUSTOM_LIST".tmp");
 
 	write_config_header(custom_list, "Custom DNS entries (HOSTS file)");
 	fputc('\n', custom_list);
@@ -877,12 +872,8 @@ bool write_custom_list(void)
 		fputs("\n# There are currently no entries in this file\n", custom_list);
 
 	// Unlock file
-	if(flock(fileno(custom_list), LOCK_UN) != 0)
-	{
-		log_err("Cannot release lock on custom.list: %s", strerror(errno));
-		fclose(custom_list);
-		return false;
-	}
+	if(locked)
+		unlock_file(custom_list, DNSMASQ_CUSTOM_LIST".tmp");
 
 	// Close file
 	if(fclose(custom_list) != 0)

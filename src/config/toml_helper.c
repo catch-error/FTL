@@ -13,8 +13,6 @@
 #include "config/config.h"
 // get_refresh_hostnames_str()
 #include "datastructure.h"
-// flock(), LOCK_SH
-#include <sys/file.h>
 // fcntl(), O_ACCMODE, O_RDONLY
 #include <fcntl.h>
 // chown_pihole()
@@ -27,7 +25,7 @@
 #include "webserver/http-common.h"
 
 // Open the TOML file for reading or writing
-FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *mode)
+FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *mode, bool *locked)
 {
 	// Use global config file
 	char filename[PATH_MAX] = { 0 };
@@ -48,29 +46,21 @@ FILE * __attribute((malloc)) __attribute((nonnull(1))) openFTLtoml(const char *m
 	}
 
 	// Lock file, may block if the file is currently opened
-	if(flock(fileno(fp), LOCK_EX) != 0)
-	{
-		const int _e = errno;
-		log_err("Cannot open config file %s in exclusive mode (%s): %s",
-		        filename, mode, strerror(errno));
-		fclose(fp);
-		errno = _e;
-		return NULL;
-	}
+	*locked = lock_file(fp, filename);
 
 	errno = 0;
 	return fp;
 }
 
 // Open the TOML file for reading or writing
-void closeFTLtoml(FILE *fp)
+void closeFTLtoml(FILE *fp, const bool locked)
 {
 	// Release file lock
-	const int fn = fileno(fp);
-	if(flock(fn, LOCK_UN) != 0)
-		log_err("Cannot release lock on FTL's config file: %s", strerror(errno));
+	if(locked)
+		unlock_file(fp, NULL);
 
 	// Get access mode
+	const int fn = fileno(fp);
 	const int mode = fcntl(fn, F_GETFL);
 	if (mode == -1)
 		log_err("Cannot get access mode for FTL's config file: %s", strerror(errno));
@@ -715,13 +705,13 @@ void readTOMLvalue(struct conf_item *conf_item, const char* key, toml_table_t *t
 		}
 		case CONF_JSON_STRING_ARRAY:
 		{
-			// Free previously allocated JSON array
-			cJSON_Delete(conf_item->v.json);
-			conf_item->v.json = cJSON_CreateArray();
-			// Parse TOML array and generate a JSON array
 			const toml_array_t *array = toml_array_in(toml, key);
 			if(array != NULL)
 			{
+				// Free previously allocated JSON array if element exists
+				cJSON_Delete(conf_item->v.json);
+				conf_item->v.json = cJSON_CreateArray();
+
 				const unsigned int nelem = toml_array_nelem(array);
 				for(unsigned int i = 0; i < nelem; i++)
 				{

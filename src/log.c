@@ -498,10 +498,10 @@ void log_counter_info(void)
 
 void log_FTL_version(const bool crashreport)
 {
-	log_info("FTL branch: %s", GIT_BRANCH);
+	log_info("FTL branch: %s", git_branch());
 	log_info("FTL version: %s", get_FTL_version());
-	log_info("FTL commit: %s", GIT_HASH);
-	log_info("FTL date: %s", GIT_DATE);
+	log_info("FTL commit: %s", git_hash());
+	log_info("FTL date: %s", git_date());
 	if(crashreport)
 	{
 		char *username_now = getUserName();
@@ -510,12 +510,23 @@ void log_FTL_version(const bool crashreport)
 	}
 	else
 		log_info("FTL user: %s", username);
-	log_info("Compiled for %s using %s", FTL_ARCH, FTL_CC);
+	log_info("Compiled for %s using %s", ftl_arch(), ftl_cc());
 }
 
-const char __attribute__ ((const)) *get_FTL_version(void)
+static char *FTLversion = NULL;
+const char __attribute__ ((pure)) *get_FTL_version(void)
 {
-	return GIT_VERSION;
+	// Obtain FTL version if not already determined
+	if(FTLversion == NULL)
+	{
+		if (strlen(git_version()) > 1)
+		{
+			// Copy version string if this is a tagged release
+			FTLversion = strdup(git_version());
+		}
+	}
+
+	return FTLversion;
 }
 
 const char __attribute__ ((const)) *get_ordinal_suffix(unsigned int number)

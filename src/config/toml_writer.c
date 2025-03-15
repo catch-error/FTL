@@ -41,12 +41,10 @@ bool writeFTLtoml(const bool verbose)
 	}
 
 	// Try to open a temporary config file for writing
-	FILE *fp;
-	if((fp = openFTLtoml("w")) == NULL)
-	{
-		log_warn("Cannot write to FTL config file (%s), content not updated", strerror(errno));
+	bool locked = false;
+	FILE *fp = openFTLtoml("w", &locked);
+	if(fp == NULL)
 		return false;
-	}
 
 	// Write header
 	fprintf(fp, "# Pi-hole configuration file (%s)\n", get_FTL_version());
@@ -166,7 +164,7 @@ bool writeFTLtoml(const bool verbose)
 	cJSON_Delete(env_vars);
 
 	// Close file and release exclusive lock
-	closeFTLtoml(fp);
+	closeFTLtoml(fp, locked);
 
 	// Move temporary file to the final location if it is different
 	// We skip the first 8 lines as they contain the header and will always

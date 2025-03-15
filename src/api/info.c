@@ -821,9 +821,9 @@ int get_version_obj(struct ftl_conn *api, cJSON *version)
 	fclose(fp);
 
 	// Add remaining properties to ftl object
-	JSON_REF_STR_IN_OBJECT(ftl_local, "branch", GIT_BRANCH);
+	JSON_REF_STR_IN_OBJECT(ftl_local, "branch", git_branch());
 	JSON_REF_STR_IN_OBJECT(ftl_local, "version", get_FTL_version());
-	JSON_REF_STR_IN_OBJECT(ftl_local, "date", GIT_DATE);
+	JSON_REF_STR_IN_OBJECT(ftl_local, "date", git_date());
 
 	cJSON *core = JSON_NEW_OBJECT();
 	JSON_ADD_NULL_IF_NOT_EXISTS(core_local, "branch");
@@ -972,16 +972,9 @@ static int api_info_messages_DELETE(struct ftl_conn *api)
 		char *endptr = NULL;
 		long int idval = strtol(token, &endptr, 10);
 		if(errno != 0 || endptr == token || *endptr != '\0' || idval < 0)
-		{
-			// Send error reply
-			free(id);
-			return send_json_error(api, 400, // 400 Bad Request
-			                       "uri_error",
-			                       "Invalid ID in path",
-			                       api->action_path);
-		}
-
-		cJSON_AddNumberToObject(ids, "id", idval);
+			log_warn("API: URI error - skipping invalid ID in path (%s): %s", api->action_path, token);
+		else
+			cJSON_AddNumberToArray(ids, idval);
 
 		// Get next token
 		token = strtok_r(NULL, ",", &saveptr);

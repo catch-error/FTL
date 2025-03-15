@@ -1556,13 +1556,13 @@ static bool FTL_check_blocking(const unsigned int queryID, const unsigned int do
 			force_next_DNS_reply = dns_cache->force_reply;
 			query_blocked(query, domain, client, QUERY_SPECIAL_DOMAIN);
 			return true;
-			break;
 
 		case QUERY_EXTERNAL_BLOCKED_IP:
 		case QUERY_EXTERNAL_BLOCKED_NULL:
 		case QUERY_EXTERNAL_BLOCKED_NXRA:
 		case QUERY_EXTERNAL_BLOCKED_EDE15:
-
+		{
+			bool shortcircuit = true;
 			switch(blocking_status)
 			{
 				case QUERY_UNKNOWN:
@@ -1585,6 +1585,15 @@ static bool FTL_check_blocking(const unsigned int queryID, const unsigned int do
 					break;
 				case QUERY_EXTERNAL_BLOCKED_IP:
 					blockingreason = "blocked upstream with known address";
+					// We do not want to short-circuit this
+					// query as to get the address contained
+					// in the upstream reply being sent
+					// downstream to the client.
+					// Otherwise, Pi-hole's short-circuiting
+					// would reply to the client with the
+					// configured blocking mode (probably
+					// NULL)
+					shortcircuit = false;
 					break;
 				case QUERY_EXTERNAL_BLOCKED_NULL:
 					blockingreason = "blocked upstream with NULL address";
@@ -1604,8 +1613,8 @@ static bool FTL_check_blocking(const unsigned int queryID, const unsigned int do
 
 			force_next_DNS_reply = dns_cache->force_reply;
 			query_blocked(query, domain, client, blocking_status);
-			return true;
-			break;
+			return shortcircuit;
+		}
 
 		case QUERY_CACHE:
 		case QUERY_FORWARDED:
@@ -1625,7 +1634,6 @@ static bool FTL_check_blocking(const unsigned int queryID, const unsigned int do
 				query->flags.allowed = true;
 
 			return false;
-			break;
 	}
 
 	// Skip all checks and continue if we hit already at least one allowlist in the chain
@@ -2386,10 +2394,12 @@ static void FTL_reply(const unsigned int flags, const char *name, const union al
 		const double mean = upstream->rtime / upstream->responses;
 		upstream->rtuncertainty += (mean - query->response)*(mean - query->response);
 
-		// Only proceed if query is not already known
-		// to have been blocked upstream
-		if(query->status == QUERY_EXTERNAL_BLOCKED_IP ||
-		   query->status == QUERY_EXTERNAL_BLOCKED_NULL ||
+		// Only proceed if query is not already known to have been
+		// blocked upstream AND short-circuited.
+		// Note: The reply needs to be analyzed further in case of
+		// QUERY_EXTERNAL_BLOCKED_IP as this is a "normal" upstream
+		// reply and we need to process it further (DNSSEC status, etc.)
+		if(query->status == QUERY_EXTERNAL_BLOCKED_NULL ||
 		   query->status == QUERY_EXTERNAL_BLOCKED_NXRA ||
 		   query->status == QUERY_EXTERNAL_BLOCKED_EDE15)
 		{
@@ -2988,8 +2998,13 @@ int _FTL_check_reply(const unsigned int rcode, const unsigned short flags,
 		{
 			FTL_blocked_upstream_by_addr(new_qstatus, id, file, line);
 
-			// Query is blocked
-			return 1;
+			// Query is blocked upstream
+
+			// Return true for any status except known blocking page
+			// IP address to short-circut the answer. In the latter case,
+			// we want to continue processing the query to get the correct
+			// reply downstream to the requesting client.
+			return new_qstatus != QUERY_EXTERNAL_BLOCKED_IP;
 		}
 	}
 
@@ -3159,7 +3174,7 @@ void FTL_fork_and_bind_sockets(struct passwd *ent_pw, bool dnsmasq_start)
 	if(daemonmode)
 		go_daemon();
 	else
-		savepid();
+		savePID();
 
 	// Initialize query database (pihole-FTL.db)
 	db_init();
@@ -3785,17 +3800,31 @@ void get_dnsmasq_metrics_obj(cJSON *json)
 		cJSON_AddNumberToObject(json, get_metric_name(i), daemon->metrics[i]);
 }
 
-void FTL_connection_error(const char *reason, const union mysockaddr *addr, const int errnum)
+void FTL_connection_error(const char *reason, const union mysockaddr *addr, const char where)
 {
+	// Backup errno
+	const int errnum = errno;
+
 	// Get the error message
 	const char *error = strerror(errnum);
 
 	// Set log priority
 	int priority = LOG_ERR;
 
+	// Additional information (if available)
+	const char *extra = "";
+	if(where == 1)
+		extra = " while connecting to upstream";
+	else if(where == 2)
+		extra = " while sending data upstream";
+	else if(where == 3)
+		extra = " while receiving payload length from upstream";
+	else if(where == 4)
+		extra = " while receiving payload data from upstream";
+
 	// If this is a TCP connection error and errno == 0, this isn't a
 	// connection error but the remote side closed the connection
-	if(errnum == 0 && strstr(reason, "TCP(read_write)") != NULL)
+	if(errnum == 0 && strcmp(reason, "TCP connection failed") == 0)
 	{
 		error = "Connection prematurely closed by remote server";
 		priority = LOG_INFO;
@@ -3810,7 +3839,7 @@ void FTL_connection_error(const char *reason, const union mysockaddr *addr, cons
 	// Get query ID, may be negative if this is a TCP query
 	const int id = daemon->log_display_id > 0 ? daemon->log_display_id : -daemon->log_display_id;
 	// Log to FTL.log
-	log_debug(DEBUG_QUERIES, "Connection error (%s#%u, ID %d): %s (%s)", ip, port, id, reason, error);
+	log_debug(DEBUG_QUERIES, "Connection error (%s#%u, ID %d): %s (%s)%s", ip, port, id, reason, error, extra);
 
 	// Log to pihole.log
 	my_syslog(priority, "%s: %s", reason, error);
@@ -3821,7 +3850,10 @@ void FTL_connection_error(const char *reason, const union mysockaddr *addr, cons
 	static time_t last = 0;
 	if(time(NULL) - last > 5)
 	{
+		// Update last time
 		last = time(NULL);
+
+		// Build server string
 		char *server = NULL;
 		if(ip[0] != '\0')
 		{
@@ -3833,10 +3865,34 @@ void FTL_connection_error(const char *reason, const union mysockaddr *addr, cons
 				server[len - 1] = '\0';
 			}
 		}
-		log_connection_error(server, reason, error);
+
+		// Extend reason with extra information (if available)
+		char *reason_extended = (char *)reason;
+		bool allocated = false;
+		if(extra[0] != '\0')
+		{
+			const size_t len = strlen(reason) + strlen(extra) + 3;
+			reason_extended = calloc(len, sizeof(char));
+			if(reason_extended != NULL)
+			{
+				snprintf(reason_extended, len, "%s%s", reason, extra);
+				reason_extended[len - 1] = '\0';
+				allocated = true;
+			}
+		}
+
+		// Log connection error
+		log_connection_error(server, reason_extended, error);
+
+		// Free allocated memory
 		if(server != NULL)
 			free(server);
+		if(allocated)
+			free(reason_extended);
 	}
+
+	// Restore errno for dnsmaq logging routines
+	errno = errnum;
 }
 
 /**

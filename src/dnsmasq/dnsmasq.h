@@ -1,4 +1,4 @@
-/* dnsmasq is Copyright (c) 2000-2024 Simon Kelley
+/* dnsmasq is Copyright (c) 2000-2025 Simon Kelley
  
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#define COPYRIGHT "Copyright (c) 2000-2024 Simon Kelley"
+#define COPYRIGHT "Copyright (c) 2000-2025 Simon Kelley"
 
 /* We do defines that influence behavior of stdio.h, so complain
    if included too early. */
@@ -282,7 +282,8 @@ struct event_desc {
 #define OPT_CACHE_RR       71
 #define OPT_LOCALHOST_SERVICE  72
 #define OPT_LOG_PROTO      73
-#define OPT_LAST           74
+#define OPT_NO_0x20        74
+#define OPT_LAST           75
 
 #define OPTION_BITS (sizeof(unsigned int)*8)
 #define OPTION_SIZE ( (OPT_LAST/OPTION_BITS)+((OPT_LAST%OPTION_BITS)!=0) )
@@ -788,12 +789,13 @@ struct dyndir {
 #define FREC_DO_QUESTION       64
 #define FREC_HAS_PHEADER      128
 #define FREC_GONE_TO_TCP      256
+#define FREC_ANSWER           512
 
 struct frec {
   struct frec_src {
     union mysockaddr source;
     union all_addr dest;
-    unsigned int iface, log_id;
+    unsigned int iface, log_id, encode_bitmap, *encode_bigmap;
     int fd;
     unsigned short orig_id, udp_pkt_size;
     struct frec_src *next;
@@ -804,7 +806,6 @@ struct frec {
   int forwardall, flags;
   time_t time;
   u32 forward_timestamp;
-  unsigned int encode_bitmap;
   int forward_delay;
   struct blockdata *stash; /* saved query or saved reply, whilst we validate */
   size_t stash_len;

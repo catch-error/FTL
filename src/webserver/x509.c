@@ -347,7 +347,7 @@ static bool check_wildcard_domain(const char *domain, const char *san, const siz
 	// Attention: The SAN is not NUL-terminated, so we need to
 	//            use the length field
 	const char *wild_domain = domain + domain_len - san_len + 1;
-	return strncasecmp(wild_domain, san + 1, san_len) == 0;
+	return strncasecmp(wild_domain, san + 1, san_len - 1) == 0;
 }
 
 static int gtls_x509_parse_certfile(gnutls_x509_crt_t *crt, const char *certfile)
