@@ -11,6 +11,9 @@
 #define X509_H
 
 #include "enums.h"
+#include <stdbool.h>
+// ssize_t
+#include <unistd.h>
 
 bool generate_certificate(const char* certfile, bool rsa, const char *domain);
 enum cert_check read_certificate(const char* certfile, const char *domain, const bool private_key);
